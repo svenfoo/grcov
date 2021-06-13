@@ -42,7 +42,7 @@ struct CoverageStats {
 }
 
 impl CoverageStats {
-    fn from_lines(lines: Lines, lines2: Lines) -> Self {
+    fn from_lines(lines: Lines, same_lines: Lines) -> Self {
         let (lines_valid, lines_covered) = lines.fold((0.0, 0.0), |(v, c), (_, l)| {
             if l.covered() {
                 (v + 1.0, c + 1.0)
@@ -51,7 +51,7 @@ impl CoverageStats {
             }
         });
 
-        let branches: Vec<Vec<Condition>> = lines2
+        let branches: Vec<Vec<Condition>> = same_lines
             .into_iter()
             .filter_map(|(_, l)| match l {
                 Line::Branch { conditions, .. } => Some(conditions),
@@ -534,6 +534,7 @@ mod tests {
     extern crate tempfile;
     use super::*;
     use crate::{CovResult, Function};
+    use rustc_hash::FxHashMap;
     use std::fs::File;
     use std::io::Read;
     use std::{collections::BTreeMap, path::PathBuf};
@@ -715,6 +716,8 @@ mod tests {
         output_cobertura(results, Some(file_path.to_str().unwrap()), true);
 
         let results = read_file(&file_path);
+
+        println!("{}", results);
 
         assert!(results.contains(r#"package name="src/main.rs""#));
         assert!(results.contains(r#"class name="main" filename="src/main.rs""#));
