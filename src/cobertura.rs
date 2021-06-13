@@ -2,11 +2,11 @@ use quick_xml::{
     events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
     Writer,
 };
-use rustc_hash::FxHashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::BTreeSet,
     io::{BufWriter, Cursor, Write},
+    iter,
 };
 use symbolic_common::Name;
 use symbolic_demangle::{Demangle, DemangleOptions};
@@ -42,13 +42,16 @@ struct CoverageStats {
 }
 
 impl CoverageStats {
-    fn from_lines(lines: FxHashMap<u32, Line>) -> Self {
-        let lines_covered = lines
-            .iter()
-            .fold(0.0, |c, (_, l)| if l.covered() { c + 1.0 } else { c });
-        let lines_valid = lines.len() as f64;
+    fn from_lines(lines: Lines, lines2: Lines) -> Self {
+        let (lines_valid, lines_covered) = lines.fold((0.0, 0.0), |(v, c), (_, l)| {
+            if l.covered() {
+                (v + 1.0, c + 1.0)
+            } else {
+                (v + 1.0, c)
+            }
+        });
 
-        let branches: Vec<Vec<Condition>> = lines
+        let branches: Vec<Vec<Condition>> = lines2
             .into_iter()
             .filter_map(|(_, l)| match l {
                 Line::Branch { conditions, .. } => Some(conditions),
@@ -91,16 +94,18 @@ impl CoverageStats {
     }
 }
 
+type Lines<'a> = Box<dyn Iterator<Item = (u32, Line)> + 'a>;
+
 trait Stats {
-    fn get_lines(&self) -> FxHashMap<u32, Line>;
+    fn get_lines<'a>(&'a self) -> Lines<'a>;
 
     fn get_stats(&self) -> CoverageStats {
-        CoverageStats::from_lines(self.get_lines())
+        CoverageStats::from_lines(self.get_lines(), self.get_lines())
     }
 }
 
 impl Stats for Coverage {
-    fn get_lines(&self) -> FxHashMap<u32, Line> {
+    fn get_lines<'a>(&'a self) -> Lines<'a> {
         self.packages.get_lines()
     }
 }
@@ -111,7 +116,7 @@ struct Package {
 }
 
 impl Stats for Package {
-    fn get_lines(&self) -> FxHashMap<u32, Line> {
+    fn get_lines(&self) -> Lines {
         self.classes.get_lines()
     }
 }
@@ -124,10 +129,8 @@ struct Class {
 }
 
 impl Stats for Class {
-    fn get_lines(&self) -> FxHashMap<u32, Line> {
-        let mut lines = self.lines.get_lines();
-        lines.extend(self.methods.get_lines());
-        lines
+    fn get_lines(&self) -> Lines {
+        self.methods.get_lines()
     }
 }
 
@@ -138,18 +141,14 @@ struct Method {
 }
 
 impl Stats for Method {
-    fn get_lines(&self) -> FxHashMap<u32, Line> {
+    fn get_lines(&self) -> Lines {
         self.lines.get_lines()
     }
 }
 
 impl<T: Stats> Stats for Vec<T> {
-    fn get_lines(&self) -> FxHashMap<u32, Line> {
-        let mut lines = FxHashMap::default();
-        for item in self {
-            lines.extend(item.get_lines());
-        }
-        lines
+    fn get_lines(&self) -> Lines {
+        Box::new(self.into_iter().flat_map(|i| i.get_lines()))
     }
 }
 
@@ -183,10 +182,8 @@ impl Line {
 }
 
 impl Stats for Line {
-    fn get_lines(&self) -> FxHashMap<u32, Line> {
-        let mut lines = FxHashMap::default();
-        lines.insert(self.number(), self.clone());
-        lines
+    fn get_lines(&self) -> Lines {
+        Box::new(iter::once((self.number(), self.clone())))
     }
 }
 
